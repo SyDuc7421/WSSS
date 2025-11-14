@@ -141,7 +141,7 @@ class VOC12ClsDatasetMSF(VOC12ClsDataset):
         for s in self.scales:
             target_size = (round(rounded_size[0]*s),
                            round(rounded_size[1]*s))
-            s_img = img.resize(target_size, resample=PIL.Image.CUBIC)
+            s_img = img.resize(target_size, resample=PIL.Image.BICUBIC)
             ms_img_list.append(s_img)
                 
             
@@ -440,7 +440,7 @@ class VOC12ImageSegDatasetMSF(VOC12ImageSegDataset):
         for s in self.scales:
             target_size = (round(rounded_size[0]*s),
                            round(rounded_size[1]*s))
-            s_img = img.resize(target_size, resample=PIL.Image.CUBIC)
+            s_img = img.resize(target_size, resample=PIL.Image.BICUBIC)
             s_label = label.resize(target_size, resample=PIL.Image.NEAREST)
             
             ms_img_list.append(s_img)
@@ -496,7 +496,7 @@ class VOC12ImageSegDatasetMSF_test(VOC12ImageSegDataset_test):
         for s in self.scales:
             target_size = (round(rounded_size[0] * s),
                            round(rounded_size[1] * s))
-            s_img = img.resize(target_size, resample=PIL.Image.CUBIC)
+            s_img = img.resize(target_size, resample=PIL.Image.BICUBIC)
             # s_label = label.resize(target_size, resample=PIL.Image.NEAREST)
 
             ms_img_list.append(s_img)

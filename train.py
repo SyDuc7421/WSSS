@@ -32,16 +32,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Dataset
-    parser.add_argument("--train_list", default="voc12/train_aug.txt", type=str)
-    parser.add_argument("--val_list", default="voc12/train.txt", type=str)
+    parser.add_argument("--train_list", default="data/train.txt", type=str)
+    parser.add_argument("--val_list", default="data/train.txt", type=str)
     parser.add_argument("--num_workers", default=8, type=int)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--use_se", action='store_true')
     parser.add_argument("--se_path", default='./se/default', type=str)
 
     # Augmentation
-    parser.add_argument("--resize", default=[256, 512], nargs='+', type=float)
-    parser.add_argument("--crop", default=256, type=int)
+    # parser.add_argument("--resize", default=[256, 512], nargs='+', type=float)
+    # parser.add_argument("--crop", default=256, type=int)
+    # parser.add_argument("--cj", default=[0.4, 0.4, 0.4, 0.1], nargs='+', type=float)
+    parser.add_argument("--resize", default=[128, 256], nargs='+', type=float)  # Giảm từ [256, 512]
+    parser.add_argument("--crop", default=128, type=int)                        # Giảm từ 256 → 128
     parser.add_argument("--cj", default=[0.4, 0.4, 0.4, 0.1], nargs='+', type=float)
 
     # Attributes
@@ -52,10 +55,14 @@ if __name__ == '__main__':
     parser.add_argument("--T", default=1, type=float)
     
     # Policy
-    parser.add_argument("--lr", default=0.02, type=float)
+    # parser.add_argument("--lr", default=0.02, type=float)
+    # parser.add_argument("--wt_dec", default=5e-4, type=float)
+    # parser.add_argument("--max_epochs", default=40, type=int)
+    # parser.add_argument("--sstart", default=2, type=int)
+    parser.add_argument("--lr", default=0.001, type=float)                     # Giảm từ 0.02 → 0.001
     parser.add_argument("--wt_dec", default=5e-4, type=float)
-    parser.add_argument("--max_epochs", default=40, type=int)
-    parser.add_argument("--sstart", default=2, type=int)
+    parser.add_argument("--max_epochs", default=3, type=int)                   # Giảm từ 40 → 3
+    parser.add_argument("--sstart", default=1, type=int)     
 
     # Experiments
     parser.add_argument("--model", default='vanilla', type=str)
@@ -67,8 +74,11 @@ if __name__ == '__main__':
     parser.add_argument("--vis", action='store_true')
     parser.add_argument("--dict", action='store_false')
     parser.add_argument("--crf", action='store_true')
-    parser.add_argument("--print_freq", default=100, type=int)
-    parser.add_argument("--out_num", default=100, type=int)
+    # parser.add_argument("--print_freq", default=100, type=int)
+    # parser.add_argument("--out_num", default=100, type=int)
+    # parser.add_argument("--alphas", default=[6, 10, 24], nargs='+', type=int)
+    parser.add_argument("--print_freq", default=5, type=int)                  # Giảm từ 100 → 5
+    parser.add_argument("--out_num", default=20, type=int)                    # Giảm từ 100 → 20
     parser.add_argument("--alphas", default=[6, 10, 24], nargs='+', type=int)
     
     parser.add_argument("--debug", action='store_true')
@@ -103,8 +113,8 @@ if __name__ == '__main__':
     
     logger.info('Start experiment ' + args.name + '!')
 
-    train_dataset = utils.build_dataset_sam(args, phase='train', path=args.train_list, use_se=True, se_path=args.se_path)
-    val_dataset = utils.build_dataset_sam(args, phase='val', path=args.val_list, use_se=True, se_path=args.se_path)
+    train_dataset = utils.build_dataset_sam(args, phase='train', path=args.train_list, use_se=args.use_se, se_path=args.se_path)
+    val_dataset = utils.build_dataset_sam(args, phase='val', path=args.val_list, use_se=args.use_se, se_path=args.se_path)
 
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, drop_last=True, num_workers=4)
     val_data_loader = DataLoader(val_dataset, shuffle=False, pin_memory=True)
@@ -169,15 +179,19 @@ if __name__ == '__main__':
                 model.infer_multi(epo, val_path, dict_path, crf_path, vis=(iter<20), dict=args.dict, crf=args.crf, writer=writer)
             
             # Evaluate mIoU
-            eval_dict = eval_in_script(logger=logger, eval_list='train', pred_dir=dict_path)
+            # eval_dict = eval_in_script(logger=logger, eval_list='train', pred_dir=dict_path)
             
-            th_temp = eval_dict['th']
-            miou_temp = eval_dict['miou']
-            mp_temp = eval_dict['mp']
-            mr_temp = eval_dict['mr']
+            # th_temp = eval_dict['th']
+            # miou_temp = eval_dict['miou']
+            # mp_temp = eval_dict['mp']
+            # mr_temp = eval_dict['mr']
             
-            miou_temp_str = str(round(miou_temp,3))
-            th_temp_str = str(round(th_temp,3))
+            # miou_temp_str = str(round(miou_temp,3))
+            # th_temp_str = str(round(th_temp,3))
+            
+            # Skip evaluation for CPU testing
+            th_temp, miou_temp, mp_temp, mr_temp = 0.0, 0.0, 0.0, 0.0
+            miou_temp_str, th_temp_str = "0.000", "0.000"
             miou_list.append(miou_temp_str)
             logger.info('Epoch ' + epo_str + ' max miou : ' + miou_temp_str + ' at ' + th_temp_str)
             logger.info(miou_list)

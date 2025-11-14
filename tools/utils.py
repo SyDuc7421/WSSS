@@ -157,7 +157,7 @@ def build_dataset(args, phase='train', path="voc12/train_aug.txt", root='./data/
     
     return dataset
 
-def build_dataset_sam(args, phase='train', path="voc12/train_aug.txt", root='./data/VOC2012', use_se=False, se_path=None):
+def build_dataset_sam(args, phase='train', path="voc12/train_aug.txt", root='./data', use_se=False, se_path=None):
 
     tf_list = []
     tf_list.append(np.asarray)

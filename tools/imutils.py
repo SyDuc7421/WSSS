@@ -84,12 +84,12 @@ class random_resize():
             img = img.resize(target_shape, resample=PIL.Image.NEAREST)
         else:
             if mode is None:
-                img = img.resize(target_shape, resample=PIL.Image.CUBIC)
+                img = img.resize(target_shape, resample=PIL.Image.BICUBIC)
             else:
                 img = img.resize(target_shape, resample=PIL.Image.NEAREST)
             
         if sal:
-           sal = sal.resize(target_shape, resample=PIL.Image.CUBIC)
+           sal = sal.resize(target_shape, resample=PIL.Image.BICUBIC)
            return img, sal
 
         if get_xy:

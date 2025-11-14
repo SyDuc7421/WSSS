@@ -31,7 +31,7 @@ from skimage.feature import peak_local_max
 
 # import resnet38d
 from networks import resnet38d
-import torch_scatter
+# import torch_scatter  # Commented out for CPU training
 
 # import SAM
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
@@ -58,7 +58,8 @@ class model_WSSS():
 
         # Common things
         self.phase = 'train'
-        self.dev = 'cuda'
+        # Use CPU if CUDA is not available
+        self.dev = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.bce = nn.BCEWithLogitsLoss()
         self.L1 = nn.L1Loss()
         self.bs = args.batch_size
@@ -96,15 +97,32 @@ class model_WSSS():
         # Define networks
         self.net_main = resnet38d.Net_CAM(C=self.C, D=self.D)
         sam_path = './pretrained/sam_vit_h.pth'
-        self.net_sam = sam_model_registry['vit_h'](checkpoint=sam_path)
+        
+        # Skip SAM loading if checkpoint doesn't exist (for quick testing)
+        try:
+            self.net_sam = sam_model_registry['vit_h'](checkpoint=sam_path)
+            print("SAM model loaded successfully")
+        except FileNotFoundError:
+            print("SAM checkpoint not found, skipping SAM initialization for quick test")
+            self.net_sam = None
 
         # Initialize networks with ImageNet pretrained weight
-        self.net_main.load_state_dict(resnet38d.convert_mxnet_to_torch('./pretrained/resnet_38d.params'), strict=False)
+        try:
+            import mxnet  # Check if mxnet is available
+            self.net_main.load_state_dict(resnet38d.convert_mxnet_to_torch('./pretrained/resnet_38d.params'), strict=False)
+            print("ResNet38d pretrained weights loaded")
+        except (FileNotFoundError, ModuleNotFoundError) as e:
+            print("ResNet38d pretrained weights not found or mxnet not available, using random initialization")
+            print(f"   Error: {e}")
 
     # Save networks
     def save_model(self, epo, ckpt_path):
         epo_str = str(epo).zfill(3)
-        torch.save(self.net_main.module.state_dict(), ckpt_path + '/' + epo_str + 'net_main.pth')
+        # Handle both DataParallel and regular models
+        if hasattr(self.net_main, 'module'):
+            torch.save(self.net_main.module.state_dict(), ckpt_path + '/' + epo_str + 'net_main.pth')
+        else:
+            torch.save(self.net_main.state_dict(), ckpt_path + '/' + epo_str + 'net_main.pth')
 
     # Load networks
     def load_model(self, epo, ckpt_path):
@@ -150,9 +168,18 @@ class model_WSSS():
         self.logger.info('* scratch layer bias lr : ' + str(20 * args.lr))
         self.logger.info('* Weight decaying : ' + str(args.wt_dec) + ', max step : ' + str(args.max_step))
 
-        self.net_main = torch.nn.DataParallel(self.net_main.to(self.dev))
-        self.net_sam = torch.nn.DataParallel(self.net_sam.to(self.dev))
-        self.logger.info('Networks are uploaded on multi-gpu.')
+        # Move to device and wrap with DataParallel (only if using GPU)
+        if self.dev == 'cpu':
+            # For CPU training, no DataParallel needed
+            self.net_main = self.net_main.to(self.dev)
+            if self.net_sam is not None:
+                self.net_sam = self.net_sam.to(self.dev)
+            self.logger.info('Networks moved to CPU.')
+        else:
+            self.net_main = torch.nn.DataParallel(self.net_main.to(self.dev))
+            if self.net_sam is not None:
+                self.net_sam = torch.nn.DataParallel(self.net_sam.to(self.dev))
+            self.logger.info('Networks are uploaded on multi-gpu.')
 
         self.nets.append(self.net_main)
 
@@ -163,7 +190,10 @@ class model_WSSS():
             self.img = pack['img'].to(self.dev)
             self.label = pack['label'].to(self.dev)
             self.name = pack['name']
-            self.se = pack['se'].to(self.dev)
+            if 'se' in pack:
+                self.se = pack['se'].to(self.dev)
+            else:
+                self.se = None
 
         if self.phase == 'eval':
             self.img = pack['img']
@@ -171,9 +201,12 @@ class model_WSSS():
                 self.img[i] = self.img[i].to(self.dev)
             self.label = pack['label'].to(self.dev)
             self.name = pack['name'][0]
-            self.se = pack['se']
-            for i in range(2):
-                self.se[i] = self.se[i].unsqueeze(0).to(self.dev)
+            if 'se' in pack:
+                self.se = pack['se']
+                for i in range(2):
+                    self.se[i] = self.se[i].unsqueeze(0).to(self.dev)
+            else:
+                self.se = None
             
 
     # Do forward/backward propagation and call optimizer to update the networks
@@ -325,21 +358,44 @@ class model_WSSS():
         loss += self.loss_cls
         
         # SAM-Segment Contrasting (SSC)
-        feat_main = F.interpolate(feat_main, size=(H,W), mode='bilinear', align_corners=False)
-        feat_main = F.normalize(feat_main, dim=1)
-        feat_main_ = feat_main.view(B,D,-1) # (B,D,HW) 
-        index_ = self.se.view(B,1,-1).long() # (B,1,HW)
-        
-        pt = torch_scatter.scatter_mean(feat_main_.detach(), index_) # (B,D,N)
-        pt = F.normalize(pt, dim=1)
-        index_ = index_.squeeze(1)
-        pred_ssc = torch.bmm(pt.permute(0,2,1), feat_main_) # (B,N,HW)
+        if self.se is not None:
+            feat_main = F.interpolate(feat_main, size=(H,W), mode='bilinear', align_corners=False)
+            feat_main = F.normalize(feat_main, dim=1)
+            feat_main_ = feat_main.view(B,D,-1) # (B,D,HW) 
+            index_ = self.se.view(B,1,-1).long() # (B,1,HW)
+            
+            # Replace torch_scatter.scatter_mean with manual implementation
+            # pt = torch_scatter.scatter_mean(feat_main_.detach(), index_) # (B,D,N)
+            # Manual scatter_mean implementation
+            index_flat = index_.squeeze(1)  # (B, HW)
+            unique_indices = torch.unique(index_flat)
+            pt_list = []
+            for batch_idx in range(B):
+                batch_features = feat_main_[batch_idx].detach()  # (D, HW)
+                batch_indices = index_flat[batch_idx]  # (HW,)
+                batch_pt = []
+                for idx in unique_indices:
+                    mask = (batch_indices == idx)
+                    if mask.any():
+                        mean_feat = batch_features[:, mask].mean(dim=1)  # (D,)
+                    else:
+                        mean_feat = torch.zeros(D, device=feat_main.device)
+                    batch_pt.append(mean_feat)
+                pt_list.append(torch.stack(batch_pt, dim=1))  # (D, N)
+            pt = torch.stack(pt_list, dim=0)  # (B, D, N)
+            
+            pt = F.normalize(pt, dim=1)
+            index_ = index_.squeeze(1)
+            pred_ssc = torch.bmm(pt.permute(0,2,1), feat_main_) # (B,N,HW)
 
-        self.loss_ssc = F.cross_entropy(pred_ssc*self.T, index_, ignore_index=0)
-        if not torch.isnan(self.loss_ssc):
-            loss += self.loss_ssc
+            self.loss_ssc = F.cross_entropy(pred_ssc*self.T, index_, ignore_index=0)
+            if not torch.isnan(self.loss_ssc):
+                loss += self.loss_ssc
+            else:
+                print("loss_ssc is NaN!")
         else:
-            print("loss_ssc is NaN!")
+            # Skip SSC loss when SE is not available
+            self.loss_ssc = torch.tensor(0.0, device=feat_main.device)
             self.loss_ssc = torch.zeros_like(self.loss_cls)
         
         # CAM-based Prompting Module (CPM)
@@ -362,7 +418,11 @@ class model_WSSS():
     # Initialization for msf-infer
     def infer_init(self):
         n_gpus = torch.cuda.device_count()
-        self.net_main_replicas = torch.nn.parallel.replicate(self.net_main.module, list(range(n_gpus)))
+        if n_gpus > 0 and hasattr(self.net_main, 'module'):
+            self.net_main_replicas = torch.nn.parallel.replicate(self.net_main.module, list(range(n_gpus)))
+        else:
+            # For CPU or single device training, no replication needed
+            self.net_main_replicas = [self.net_main]
 
     # (Multi-Thread) Infer MSF-CAM and save image/cam_dict/crf_dict
     def infer_multi(self, epo, val_path, dict_path, crf_path, vis=False, dict=False, crf=False, writer=None):
@@ -375,22 +435,31 @@ class model_WSSS():
         self.gt_cls = np.nonzero(gt)[0]
 
         _, _, H, W = self.img[2].shape
-        n_gpus = torch.cuda.device_count()
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
         def _work(i, img):
             with torch.no_grad():
-                with torch.cuda.device(i % n_gpus):
-                    out = self.net_main_replicas[i % n_gpus](img.cuda())
-                    cam = out['cam']
-                    cam = F.interpolate(cam, (H, W), mode='bilinear', align_corners=False)[0]
-                    cam = F.relu(cam)
+                if torch.cuda.is_available():
+                    with torch.cuda.device(i % n_gpus):
+                        out = self.net_main_replicas[i % n_gpus](img.cuda())
+                        device_img = img.cuda()
+                else:
+                    # CPU mode - use single model
+                    replica_idx = min(i % len(self.net_main_replicas), 0)
+                    out = self.net_main_replicas[replica_idx](img.to(device))
+                    device_img = img.to(device)
+                
+                cam = out['cam']
+                cam = F.interpolate(cam, (H, W), mode='bilinear', align_corners=False)[0]
+                cam = F.relu(cam)
 
-                    cam = cam.cpu().numpy()
-                    cam *= self.label.clone().cpu().view(20, 1, 1).numpy()
+                cam = cam.cpu().numpy()
+                cam *= self.label.clone().cpu().view(20, 1, 1).numpy()
 
-                    if i % 2 == 1:
-                        cam = np.flip(cam, axis=-1)
-                    return cam
+                if i % 2 == 1:
+                    cam = np.flip(cam, axis=-1)
+                return cam
 
         thread_pool = pyutils.BatchThreader(_work, list(enumerate(self.img)), batch_size=8, prefetch_size=0, processes=8)
         
@@ -428,8 +497,12 @@ class model_WSSS():
         acc_str = ''
 
         for i in range(len(self.loss_names)):
-            loss_str += self.loss_names[i] + ' : ' + str(round(self.running_loss[i] / self.count, 5)) + ', '
-            writer.add_scalar('Loss/'+self.loss_names[i], round(self.running_loss[i] / self.count, 5), iter)
+            if self.count > 0:
+                avg_loss = round(self.running_loss[i] / self.count, 5)
+                loss_str += self.loss_names[i] + ' : ' + str(avg_loss) + ', '
+                writer.add_scalar('Loss/'+self.loss_names[i], avg_loss, iter)
+            else:
+                loss_str += self.loss_names[i] + ' : 0.0, '
 
         for i in range(len(self.acc_names)):
             if self.right_count[i] != 0:
