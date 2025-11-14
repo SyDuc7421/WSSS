@@ -81,13 +81,15 @@ def do_python_eval(predict_folder, gt_folder, name_list, num_cls, task, threshol
                 TP[i].acquire()
                 TP[i].value += np.sum((gt==i)*mask)
                 TP[i].release()
-    p_list = []
-    for i in range(8):
-        p = multiprocessing.Process(target=compare, args=(i,8,TP,P,T,task,threshold))
-        p.start()
-        p_list.append(p)
-    for p in p_list:
-        p.join()
+    
+    # Use sequential processing instead of multiprocessing to avoid Windows issues
+    try:
+        for i in range(8):
+            compare(i, 8, TP, P, T, task, threshold)
+    except Exception as e:
+        print(f"Sequential processing failed: {e}")
+        # Fallback to single process
+        compare(0, 1, TP, P, T, task, threshold)
    
     precision = []
     recall = []

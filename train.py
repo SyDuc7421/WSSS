@@ -179,19 +179,22 @@ if __name__ == '__main__':
                 model.infer_multi(epo, val_path, dict_path, crf_path, vis=(iter<20), dict=args.dict, crf=args.crf, writer=writer)
             
             # Evaluate mIoU
-            # eval_dict = eval_in_script(logger=logger, eval_list='train', pred_dir=dict_path)
-            
-            # th_temp = eval_dict['th']
-            # miou_temp = eval_dict['miou']
-            # mp_temp = eval_dict['mp']
-            # mr_temp = eval_dict['mr']
-            
-            # miou_temp_str = str(round(miou_temp,3))
-            # th_temp_str = str(round(th_temp,3))
-            
-            # Skip evaluation for CPU testing
-            th_temp, miou_temp, mp_temp, mr_temp = 0.0, 0.0, 0.0, 0.0
-            miou_temp_str, th_temp_str = "0.000", "0.000"
+            try:
+                eval_dict = eval_in_script(logger=logger, eval_list='train', pred_dir=dict_path)
+                
+                th_temp = eval_dict['th']
+                miou_temp = eval_dict['miou']
+                mp_temp = eval_dict['mp']
+                mr_temp = eval_dict['mr']
+                
+                miou_temp_str = str(round(miou_temp,3))
+                th_temp_str = str(round(th_temp,3))
+            except Exception as e:
+                logger.info(f"Evaluation failed: {e}")
+                # Skip evaluation for CPU testing
+                th_temp, miou_temp, mp_temp, mr_temp = 0.0, 0.0, 0.0, 0.0
+                miou_temp_str, th_temp_str = "0.000", "0.000"
+
             miou_list.append(miou_temp_str)
             logger.info('Epoch ' + epo_str + ' max miou : ' + miou_temp_str + ' at ' + th_temp_str)
             logger.info(miou_list)
